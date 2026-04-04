@@ -4,11 +4,15 @@ Run: streamlit run app.py
 """
 
 import time
+import logging
 import concurrent.futures
 import streamlit as st
 from audio_recorder_streamlit import audio_recorder
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+# from langchain_community.chat_models.sambanova import ChatSambanova
+# from langchain_groq import ChatGroq
+# from langchain_sambanova import ChatSambaNova
 
 # Local imports
 import config
@@ -23,27 +27,56 @@ st.set_page_config(page_title="Diya — Voice Assistant", page_icon=config.ASSIS
 st.title(f"{config.ASSISTANT_ICON} {config.ASSISTANT_NAME}")
 st.caption("Your Indian voice assistant — speak to me in English!")
 
-for _k, _v in {"chat_history": [], "pending_tts": None, "api_key": "", "tavily_key": "", "recorder_key": 0, "diya_state": "ready", "memory": None, "continuous": False, "last_activity": time.time()}.items():
+# Initialize Session State
+for _k, _v in {
+    "chat_history": [], 
+    "pending_tts": None, 
+    "api_key": "",         # Will hold Sambanova Key
+    "groq_key": "",        # NEW: Will hold Groq Key for Transcription
+    "tavily_key": "", 
+    "recorder_key": 0, 
+    "diya_state": "ready", 
+    "memory": None, 
+    "continuous": False, 
+    "last_activity": time.time(),
+    "response_cache": {}
+}.items():
     if _k not in st.session_state: st.session_state[_k] = _v
 
 if st.session_state.memory is None: st.session_state.memory = load_memory()
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 env_vars = config.load_environment()
-if not st.session_state.api_key: st.session_state.api_key = env_vars["groq"]
+
+# Load SambaNova Key (For LLM / Brain)
+if not st.session_state.api_key: st.session_state.api_key = env_vars.get("sambanova") or env_vars.get("groq")
+
+# Load Groq Key (For Transcription / Ears) - CRITICAL FIX
+if not st.session_state.groq_key: st.session_state.groq_key = env_vars.get("groq")
+
 if not st.session_state.tavily_key: st.session_state.tavily_key = env_vars["tavily"]
 
-if not st.session_state.api_key or not st.session_state.tavily_key:
+if not st.session_state.api_key or not st.session_state.groq_key or not st.session_state.tavily_key:
     st.markdown("### 🔑 Enter API keys")
-    c1, c2 = st.columns(2)
-    with c1: g = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
-    with c2: t = st.text_input("Tavily API Key", type="password", placeholder="tvly-...")
+    c1, c2, c3 = st.columns(3)
+    with c1: s = st.text_input("SambaNova API Key (Brain)", type="password", placeholder="Sambanova Key")
+    with c2: g = st.text_input("Groq API Key (Ears)", type="password", placeholder="gsk_...")
+    with c3: t = st.text_input("Tavily API Key", type="password", placeholder="tvly-...")
+    
     if st.button("Save & Start", use_container_width=True):
-        if g.strip() and t.strip(): st.session_state.api_key, st.session_state.tavily_key = g.strip(), t.strip(); st.rerun()
-        else: st.error("Both keys required.")
+        if s.strip() and g.strip() and t.strip(): 
+            st.session_state.api_key, st.session_state.groq_key, st.session_state.tavily_key = s.strip(), g.strip(), t.strip()
+            st.rerun()
+        else: st.error("All keys required.")
     st.stop()
 
-llm = ChatGroq(model=config.LLM_MODEL, groq_api_key=st.session_state.api_key)
+# Initialize SambaNova LLM using OpenAI Compatibility
+llm = ChatOpenAI(
+    model=config.LLM_MODEL, 
+    api_key=st.session_state.api_key,  # Uses SambaNova Key
+    base_url="https://api.sambanova.ai/v1",
+    temperature=0.7
+)
 
 # ── Top Bar & Controls ────────────────────────────────────────────────────────
 if st.session_state.diya_state == "ready":
@@ -84,18 +117,12 @@ if st.session_state.diya_state == "speaking":
 st.divider()
 if st.session_state.diya_state == "ready":
     st.markdown("#### 🎙️ Listening — speak when ready" if st.session_state.continuous else "#### 🎙️ Tap the mic and speak")
-    
-    # =====================================================================
-    # FIX 6: INCREASE PAUSE THRESHOLD FOR CLOUD
-    # Localhost works fine with 1.0s. Cloud latency requires longer waiting 
-    # to ensure the user finished their sentence before uploading.
-    # =====================================================================
     audio_bytes = audio_recorder(
         text="", 
         recording_color="#e74c3c", 
         neutral_color="#2ecc71", 
         icon_size="2x", 
-        pause_threshold=2.5,  # INCREASED FROM 1.0 to 2.5
+        pause_threshold=2.5, 
         key=f"recorder_{st.session_state.recorder_key}"
     )
 else:
@@ -107,31 +134,26 @@ if audio_bytes:
     st.session_state.last_activity = time.time()
     st.session_state.diya_state = "thinking"
 
-    # =====================================================================
-    # FIX 4: SILENCE FILTER (Prevent Infinite Loop)
-    # =====================================================================
     MIN_AUDIO_SIZE = 6000 
     if len(audio_bytes) < MIN_AUDIO_SIZE:
         st.session_state.recorder_key += 1
         st.session_state.diya_state = "ready"
         st.rerun()
 
+    # CRITICAL FIX: Use Groq Key for Transcription, not SambaNova Key
     try: 
-        user_query = transcribe(audio_bytes, st.session_state.api_key)
+        user_query = transcribe(audio_bytes, st.session_state.groq_key)
     except Exception as exc:
         st.error(f"Transcription failed: {exc}"); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.stop()
 
     if not user_query:
         st.warning("No speech detected."); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.rerun()
 
-    # INSTANTLY render user text to screen
     with st.chat_message("user"):
         st.markdown(f"🎤 {user_query}")
     st.session_state.chat_history.append(HumanMessage(content=user_query))
 
-    # =====================================================================
-    # FIX 5: SUMMARIZATION BLOCK ROBUSTNESS
-    # =====================================================================
+    # ── Summarization ────────────────────────────────────────────────────────
     if any(t in user_query.lower() for t in config.SUMMARIZE_TRIGGERS):
         if st.session_state.chat_history[:-2]: 
             with st.spinner("Summarizing..."): 
@@ -163,16 +185,35 @@ if audio_bytes:
             st.session_state.chat_history.append(AIMessage(content=msg))
             st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.rerun()
 
-    search_context = None
-    if should_search(user_query):
-        with st.spinner("🔍 Searching..."): search_context = web_search(user_query) or "Search failed. Tell user you couldn't find data."
+    # ── Normal Conversation (Rolling Window + Cache) ─────────────────────────
+    cache_key = user_query.lower().strip()
+    response = None
+    if cache_key in st.session_state.response_cache:
+        response = st.session_state.response_cache[cache_key]
+        st.caption("⚡ Retrieved from local cache")
 
-    with st.spinner(f"{config.ASSISTANT_NAME} is thinking..."):
-        try: response = get_llm_response(user_query, search_context, st.session_state.chat_history, st.session_state.memory, llm)
-        except Exception as exc:
-            st.error(f"LLM error: {exc}"); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.stop()
+    if response is None:
+        search_context = None
+        if should_search(user_query):
+            with st.spinner("🔍 Searching..."): search_context = web_search(user_query) or "Search failed. Tell user you couldn't find data."
 
-    # INSTANTLY render Diya text to screen
+        window_size = config.ROLLING_WINDOW_SIZE
+        rolling_history = st.session_state.chat_history[-window_size:] if len(st.session_state.chat_history) > window_size else st.session_state.chat_history
+
+        with st.spinner(f"{config.ASSISTANT_NAME} is thinking..."):
+            try: 
+                response = get_llm_response(
+                    user_query, 
+                    search_context, 
+                    rolling_history, 
+                    st.session_state.memory, 
+                    llm
+                )
+            except Exception as exc:
+                st.error(f"LLM error: {exc}"); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.stop()
+        
+        st.session_state.response_cache[cache_key] = response
+
     with st.chat_message("assistant"):
         st.markdown(f"{config.ASSISTANT_ICON} {response}")
     st.session_state.chat_history.append(AIMessage(content=response))
@@ -183,12 +224,9 @@ if audio_bytes:
 
     mem_snap = dict(st.session_state.memory)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    # We use a wrapper to ensure session_state updates safely even on cloud
     def safe_update(mem, q, r, llm_inst):
-        try:
-            update_memory_bg(mem, q, r, llm_inst)
-        except Exception as e:
-            logging.error(f"Memory update failed (Cloud FS): {e}")
+        try: update_memory_bg(mem, q, r, llm_inst)
+        except Exception as e: logging.error(f"Memory update failed: {e}")
 
     executor.submit(safe_update, mem_snap, user_query, response, llm)
     executor.shutdown(wait=False)
@@ -202,9 +240,17 @@ st.divider()
 c1, c2 = st.columns(2)
 with c1:
     if st.button("🗑️ Clear chat", use_container_width=True):
-        st.session_state.update({"chat_history": [], "pending_tts": None, "diya_state": "ready", "recorder_key": st.session_state.recorder_key + 1, "last_activity": time.time()})
+        st.session_state.update({
+            "chat_history": [], 
+            "pending_tts": None, 
+            "diya_state": "ready", 
+            "recorder_key": st.session_state.recorder_key + 1, 
+            "last_activity": time.time(),
+            "response_cache": {}
+        })
         st.rerun()
 with c2:
     if st.button("📋 Summarize", use_container_width=True):
         if st.session_state.chat_history: st.info(summarize_conversation(st.session_state.chat_history, llm))
         else: st.warning("No conversation yet.")
+

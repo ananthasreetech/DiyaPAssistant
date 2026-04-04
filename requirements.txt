@@ -2,6 +2,8 @@ streamlit
 langchain-groq
 langchain-core
 langchain-community
+langchain-sambanova
+langchain-openai
 audio-recorder-streamlit
 edge-tts
 groq

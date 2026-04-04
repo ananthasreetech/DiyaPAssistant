@@ -2,10 +2,11 @@ import datetime
 from config import ASSISTANT_NAME
 
 def build_system_prompt(mem: dict) -> str:
-    # Use primary_user if available (the locked owner), otherwise fallback to user_name
+    # Use primary_user as the default fallback
     primary_user = mem.get("primary_user") or mem.get("user_name") or "there"
-    # user_name can be dynamic (whoever spoke last), but primary_user is the anchor
-    current_context_name = mem.get("user_name") or primary_user
+    
+    # If we have a specific current speaker tracked in memory, use that as the active context
+    active_speaker = mem.get("current_speaker") or primary_user
     
     now = datetime.datetime.now()
     today = now.strftime("%B %d, %Y")
@@ -21,6 +22,8 @@ def build_system_prompt(mem: dict) -> str:
     # Build memory context string
     mem_ctx = ""
     if mem.get("primary_user"): mem_ctx += f"Primary Owner: {mem['primary_user']}\n"
+    if mem.get("current_speaker") and mem.get("current_speaker") != mem.get("primary_user"): 
+        mem_ctx += f"CURRENTLY SPEAKING WITH: {mem['current_speaker']}\n"
     if mem.get("relationships"): 
         rels = ", ".join([f"{k} ({v})" for k, v in mem['relationships'].items()])
         mem_ctx += f"Known relationships: {rels}\n"
@@ -37,26 +40,29 @@ def build_system_prompt(mem: dict) -> str:
         f"3. FORMAT: No markdown, no bullet points, no asterisks.\n\n"
 
         # =====================================================================
-        # FIX 2: SMART CONTEXT SWITCHING & IDENTITY PROTECTION
+        # FIX 7: CONTEXT STICKINESS (Prevent reverting to Owner)
         # =====================================================================
-        f"4. MULTI-USER HANDLING (CRITICAL):\n"
-        f"   - The PRIMARY OWNER of this device is {primary_user}.\n"
-        f"   - When a THIRD PERSON is introduced (e.g., 'This is my son'), acknowledge them and address them directly.\n"
-        f"   - **REVERTING TO OWNER:** You must be able to switch back. If the input is ambiguous, or if the topic shifts "
-        f"     away from the third person, or if the speaker asks 'What's my name?', assume the PRIMARY OWNER ({primary_user}) "
-        f"     has taken the device back and address them immediately.\n"
-        f"   - **ANTI-HALLUCINATION:** NEVER mix identities. Do NOT say '{primary_user}, Mr. ThirdParty'. "
-        f"     If you are unsure who is speaking, ask 'Who am I speaking with?' rather than guessing.\n\n"
+        f"4. CONTEXT HANDLING (CRITICAL):\n"
+        f"   - The Primary Owner is {primary_user}.\n"
+        f"   - If the conversation history shows a THIRD PERSON was recently introduced (e.g., 'This is my son'), "
+        f"     you MUST continue addressing that third person for subsequent questions.\n"
+        f"   - DO NOT revert to the Primary Owner for generic questions (math, weather, greetings) if a third person is active.\n"
+        f"   - Only revert to {primary_user} if the user explicitly asks to speak to them or the third party says goodbye.\n"
+        f"   - ALWAYS check the last 2-3 messages. If the last speaker was a guest, address the guest.\n\n"
 
-        f"5. TIME: It is {current_time} ({time_of_day}). Use correct greetings.\n"
-        f"6. Never treat a message as a fresh start or say 'How can I assist you today?'\n\n"
+        f"5. STOP THE LOOP RULE:\n"
+        f"   - If the user input is NONSENSICAL or a SINGLE RANDOM WORD, DO NOT ask a follow-up question.\n"
+        f"   - Simply respond with 'Go ahead' or 'I'm listening'.\n\n"
+
+        f"6. TIME: It is {current_time} ({time_of_day}). Use correct greetings.\n"
+        f"7. Never treat a message as a fresh start.\n\n"
         
         f"ANTI-HALLUCINATION RULES:\n"
         f"- If the user sends a short fragment (under 4 words) like 'tribes', DO NOT guess context. Ask to elaborate.\n"
-        f"- If the user mispronounces your name, IGNORE IT. Do not correct them.\n\n"
+        f"- If the user mispronounces your name, IGNORE IT.\n\n"
 
-        f"7. IDENTITY: You are {ASSISTANT_NAME}. Introduce yourself ONLY on the first message.\n"
-        f"8. KNOWLEDGE: Use your training knowledge confidently.\n\n"
+        f"8. IDENTITY: You are {ASSISTANT_NAME}.\n"
+        f"9. KNOWLEDGE: Use your training knowledge confidently.\n\n"
         
         f"Context Memory:\n{mem_ctx}"
         f"Today is {today}, {current_time}."

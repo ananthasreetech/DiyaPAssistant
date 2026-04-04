@@ -9,10 +9,19 @@ MEMORY_FILE = str(BASE_DIR / "diya_memory.json")
 # ── Assistant Constants ───────────────────────────────────────────────────────
 ASSISTANT_NAME = "Diya"
 ASSISTANT_ICON = "🪔"
-LLM_MODEL = "llama-3.3-70b-versatile"
+LLM_MODEL = "Meta-Llama-3.3-70B-Instruct"
+# LLM_MODEL = "llama-3.3-70b-versatile"
 WHISPER_MODEL = "whisper-large-v3-turbo"
 TTS_VOICE = "en-IN-NeerjaNeural"
-INACTIVITY_TIMEOUT = 180
+# INACTIVITY_TIMEOUT = 180
+
+# ── Memory Settings ───────────────────────────────────────────────────────────
+# Number of last messages to send as context. 
+# Keeps token usage low (6 messages = ~3 full turns of conversation).
+ROLLING_WINDOW_SIZE = 6 
+
+# ── Timeouts ─────────────────────────────────────────────────────────────────
+INACTIVITY_TIMEOUT = 60  # seconds before mic refresh
 
 # ── STT Filters ───────────────────────────────────────────────────────────────
 NO_SPEECH_PROB_THRESHOLD = 0.5
@@ -45,6 +54,9 @@ SUMMARIZE_TRIGGERS = (
     "recap", "give me a recap", "what was said", "summarise",
 )
 
+# ── File Paths ───────────────────────────────────────────────────────────────
+MEMORY_FILE = "diya_memory.json"
+
 STATE_UI = {
     "ready": ("🟢", "Ready — tap the mic to speak"),
     "thinking": ("🟡", "Thinking..."),
@@ -55,6 +67,7 @@ STATE_UI = {
 def load_environment():
     load_dotenv()
     return {
-        "groq": os.getenv("GROQ_API_KEY", "").strip(),
+        "sambanova": os.getenv("SAMBANOVA_API_KEY", "").strip(),
+        "groq": os.getenv("GROQ_API_KEY", "").strip(), # Kept for backward compatibility if needed
         "tavily": os.getenv("TAVILY_API_KEY", "").strip()
     }
