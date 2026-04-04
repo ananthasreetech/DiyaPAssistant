@@ -84,8 +84,20 @@ if st.session_state.diya_state == "speaking":
 st.divider()
 if st.session_state.diya_state == "ready":
     st.markdown("#### 🎙️ Listening — speak when ready" if st.session_state.continuous else "#### 🎙️ Tap the mic and speak")
-    # Lowered pause threshold slightly for better flow
-    audio_bytes = audio_recorder(text="", recording_color="#e74c3c", neutral_color="#2ecc71", icon_size="2x", pause_threshold=1.0, key=f"recorder_{st.session_state.recorder_key}")
+    
+    # =====================================================================
+    # FIX 6: INCREASE PAUSE THRESHOLD FOR CLOUD
+    # Localhost works fine with 1.0s. Cloud latency requires longer waiting 
+    # to ensure the user finished their sentence before uploading.
+    # =====================================================================
+    audio_bytes = audio_recorder(
+        text="", 
+        recording_color="#e74c3c", 
+        neutral_color="#2ecc71", 
+        icon_size="2x", 
+        pause_threshold=2.5,  # INCREASED FROM 1.0 to 2.5
+        key=f"recorder_{st.session_state.recorder_key}"
+    )
 else:
     audio_bytes = None
     st.markdown(f"#### {'🟡 Thinking...' if st.session_state.diya_state == 'thinking' else '🔵 Speaking...'}")
@@ -104,9 +116,6 @@ if audio_bytes:
         st.session_state.diya_state = "ready"
         st.rerun()
 
-    # =====================================================================
-    # FIX 3: LATENCY REDUCTION
-    # =====================================================================
     try: 
         user_query = transcribe(audio_bytes, st.session_state.api_key)
     except Exception as exc:
@@ -121,23 +130,19 @@ if audio_bytes:
     st.session_state.chat_history.append(HumanMessage(content=user_query))
 
     # =====================================================================
-    # FIX 5: SUMMARIZATION BLOCK ROBUSTNESS (Timeout Fix)
+    # FIX 5: SUMMARIZATION BLOCK ROBUSTNESS
     # =====================================================================
     if any(t in user_query.lower() for t in config.SUMMARIZE_TRIGGERS):
-        if st.session_state.chat_history[:-2]: # Exclude the just-added messages
+        if st.session_state.chat_history[:-2]: 
             with st.spinner("Summarizing..."): 
                 summary = summarize_conversation(st.session_state.chat_history[:-2], llm)
             
-            # Truncate summary for TTS to prevent 30s timeout
-            # TTS engines often time out on text longer than ~500 chars
             safe_summary_for_audio = summary
             if len(summary) > 500:
                 safe_summary_for_audio = summary[:490] + "... (and more)"
             
-            # Add Try/Except to catch TTS timeouts
             try:
-                with st.spinner("Generating voice..."): 
-                    tts = synthesize(safe_summary_for_audio)
+                with st.spinner("Generating voice..."): tts = synthesize(safe_summary_for_audio)
                 
                 with st.chat_message("assistant"): st.markdown(f"{config.ASSISTANT_ICON} {summary}")
                 st.session_state.chat_history.append(AIMessage(content=summary))
@@ -146,7 +151,6 @@ if audio_bytes:
                 st.session_state.recorder_key += 1; st.rerun()
             
             except Exception as e:
-                # If TTS fails (Timeout), still show the text and recover
                 with st.chat_message("assistant"): st.markdown(f"{config.ASSISTANT_ICON} {summary}")
                 st.session_state.chat_history.append(AIMessage(content=summary))
                 st.warning("The summary was too long to speak, but you can read it above.")
@@ -179,7 +183,14 @@ if audio_bytes:
 
     mem_snap = dict(st.session_state.memory)
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    executor.submit(update_memory_bg, mem_snap, user_query, response, llm)
+    # We use a wrapper to ensure session_state updates safely even on cloud
+    def safe_update(mem, q, r, llm_inst):
+        try:
+            update_memory_bg(mem, q, r, llm_inst)
+        except Exception as e:
+            logging.error(f"Memory update failed (Cloud FS): {e}")
+
+    executor.submit(safe_update, mem_snap, user_query, response, llm)
     executor.shutdown(wait=False)
 
     st.session_state.diya_state = "speaking"
