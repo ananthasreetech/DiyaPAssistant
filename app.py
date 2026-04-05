@@ -31,8 +31,8 @@ st.caption("Your Indian voice assistant — speak to me in English!")
 for _k, _v in {
     "chat_history": [], 
     "pending_tts": None, 
-    "api_key": "",         # Will hold Sambanova Key
-    "groq_key": "",        # NEW: Will hold Groq Key for Transcription
+    "api_key": "",         # Sambanova Key
+    "groq_key": "",        # Groq Key
     "tavily_key": "", 
     "recorder_key": 0, 
     "diya_state": "ready", 
@@ -48,19 +48,17 @@ if st.session_state.memory is None: st.session_state.memory = load_memory()
 # ── API Keys ──────────────────────────────────────────────────────────────────
 env_vars = config.load_environment()
 
-# Load SambaNova Key (For LLM / Brain)
+# Load SambaNova Key
 if not st.session_state.api_key: st.session_state.api_key = env_vars.get("sambanova") or env_vars.get("groq")
-
-# Load Groq Key (For Transcription / Ears) - CRITICAL FIX
+# Load Groq Key
 if not st.session_state.groq_key: st.session_state.groq_key = env_vars.get("groq")
-
 if not st.session_state.tavily_key: st.session_state.tavily_key = env_vars["tavily"]
 
 if not st.session_state.api_key or not st.session_state.groq_key or not st.session_state.tavily_key:
     st.markdown("### 🔑 Enter API keys")
     c1, c2, c3 = st.columns(3)
-    with c1: s = st.text_input("SambaNova API Key (Brain)", type="password", placeholder="Sambanova Key")
-    with c2: g = st.text_input("Groq API Key (Ears)", type="password", placeholder="gsk_...")
+    with c1: s = st.text_input("SambaNova API Key", type="password", placeholder="Sambanova Key")
+    with c2: g = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
     with c3: t = st.text_input("Tavily API Key", type="password", placeholder="tvly-...")
     
     if st.button("Save & Start", use_container_width=True):
@@ -70,10 +68,10 @@ if not st.session_state.api_key or not st.session_state.groq_key or not st.sessi
         else: st.error("All keys required.")
     st.stop()
 
-# Initialize SambaNova LLM using OpenAI Compatibility
+# Initialize LLM
 llm = ChatOpenAI(
     model=config.LLM_MODEL, 
-    api_key=st.session_state.api_key,  # Uses SambaNova Key
+    api_key=st.session_state.api_key,
     base_url="https://api.sambanova.ai/v1",
     temperature=0.7
 )
@@ -140,7 +138,6 @@ if audio_bytes:
         st.session_state.diya_state = "ready"
         st.rerun()
 
-    # CRITICAL FIX: Use Groq Key for Transcription, not SambaNova Key
     try: 
         user_query = transcribe(audio_bytes, st.session_state.groq_key)
     except Exception as exc:
@@ -185,7 +182,7 @@ if audio_bytes:
             st.session_state.chat_history.append(AIMessage(content=msg))
             st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.rerun()
 
-    # ── Normal Conversation (Rolling Window + Cache) ─────────────────────────
+    # ── Normal Conversation ───────────────────────────────────────────────────
     cache_key = user_query.lower().strip()
     response = None
     if cache_key in st.session_state.response_cache:
@@ -218,18 +215,21 @@ if audio_bytes:
         st.markdown(f"{config.ASSISTANT_ICON} {response}")
     st.session_state.chat_history.append(AIMessage(content=response))
 
+    # =====================================================================
+    # FIX 8: SYNCHRONOUS MEMORY UPDATE
+    # We update memory NOW, in the main thread. 
+    # This ensures st.session_state.memory is updated with the name 
+    # BEFORE the next interaction starts.
+    # =====================================================================
+    with st.spinner("Updating memory..."):
+        try:
+            update_memory_bg(st.session_state.memory, user_query, response, llm)
+        except Exception as e:
+            print(f"Memory update failed: {e}")
+
     with st.spinner("Generating voice..."):
         try: st.session_state.pending_tts = synthesize(response)
         except: st.session_state.pending_tts = None
-
-    mem_snap = dict(st.session_state.memory)
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    def safe_update(mem, q, r, llm_inst):
-        try: update_memory_bg(mem, q, r, llm_inst)
-        except Exception as e: logging.error(f"Memory update failed: {e}")
-
-    executor.submit(safe_update, mem_snap, user_query, response, llm)
-    executor.shutdown(wait=False)
 
     st.session_state.diya_state = "speaking"
     st.session_state.recorder_key += 1
