@@ -5,14 +5,10 @@ Run: streamlit run app.py
 
 import time
 import logging
-import concurrent.futures
 import streamlit as st
 from audio_recorder_streamlit import audio_recorder
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-# from langchain_community.chat_models.sambanova import ChatSambanova
-# from langchain_groq import ChatGroq
-# from langchain_sambanova import ChatSambaNova
 
 # Local imports
 import config
@@ -183,49 +179,89 @@ if audio_bytes:
             st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.rerun()
 
     # ── Normal Conversation ───────────────────────────────────────────────────
-    cache_key = user_query.lower().strip()
-    response = None
-    if cache_key in st.session_state.response_cache:
-        response = st.session_state.response_cache[cache_key]
-        st.caption("⚡ Retrieved from local cache")
-
-    if response is None:
-        search_context = None
-        if should_search(user_query):
-            with st.spinner("🔍 Searching..."): search_context = web_search(user_query) or "Search failed. Tell user you couldn't find data."
-
-        window_size = config.ROLLING_WINDOW_SIZE
-        rolling_history = st.session_state.chat_history[-window_size:] if len(st.session_state.chat_history) > window_size else st.session_state.chat_history
-
-        with st.spinner(f"{config.ASSISTANT_NAME} is thinking..."):
-            try: 
-                response = get_llm_response(
-                    user_query, 
-                    search_context, 
-                    rolling_history, 
-                    st.session_state.memory, 
-                    llm
-                )
-            except Exception as exc:
-                st.error(f"LLM error: {exc}"); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.stop()
+    
+    # =====================================================================
+    # FIX 11 (UPDATED): STRICT LOCAL GREETING HANDLER
+    # Only triggers if the sentence STARTS with a greeting keyword.
+    # Prevents "Can you greet him?" from triggering.
+    # =====================================================================
+    user_query_lower = user_query.lower().strip()
+    
+    # We use strict keywords without partial matches like "greet"
+    greeting_keywords = ["good morning", "good afternoon", "good evening", "hello", "hi", "hey"]
+    
+    # Find if the sentence starts with a greeting
+    detected_greeting = next((g for g in greeting_keywords if user_query_lower.startswith(g)), None)
+    
+    if detected_greeting:
+        # Only repeat the greeting part, not the whole user sentence
+        response = f"{detected_greeting.capitalize()}! How can I help you today?"
+        st.caption("⚡ Handled locally (Saved API Token)")
+    else:
+        # Proceed with API calls
+        cache_key = user_query_lower
+        response = None
         
-        st.session_state.response_cache[cache_key] = response
+        if cache_key in st.session_state.response_cache:
+            response = st.session_state.response_cache[cache_key]
+            st.caption("⚡ Retrieved from local cache")
 
+        if response is None:
+            search_context = None
+            if should_search(user_query):
+                with st.spinner("🔍 Searching..."): search_context = web_search(user_query) or "Search failed. Tell user you couldn't find data."
+
+            window_size = config.ROLLING_WINDOW_SIZE
+            rolling_history = st.session_state.chat_history[-window_size:] if len(st.session_state.chat_history) > window_size else st.session_state.chat_history
+
+            # RETRY LOGIC FOR RATE LIMITS
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                try:
+                    with st.spinner(f"{config.ASSISTANT_NAME} is thinking..."):
+                        response = get_llm_response(
+                            user_query, 
+                            search_context, 
+                            rolling_history, 
+                            st.session_state.memory, 
+                            llm
+                        )
+                    break # Success, exit loop
+                except Exception as exc:
+                    if "429" in str(exc) or "rate limit" in str(exc).lower():
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            st.warning(f"Rate limit hit. Waiting {3 * retry_count}s... (Retry {retry_count}/{max_retries})")
+                            time.sleep(3 * retry_count)
+                    else:
+                        st.error(f"LLM error: {exc}"); st.session_state.diya_state = "ready"; st.session_state.recorder_key += 1; st.stop()
+            
+            # Crash Prevention
+            if response is None:
+                st.error("The service is currently busy. Please wait a minute and try again.")
+                st.session_state.diya_state = "ready"
+                st.session_state.recorder_key += 1
+                st.rerun()
+                st.stop()
+            
+            st.session_state.response_cache[cache_key] = response
+
+    # Render Diya response
     with st.chat_message("assistant"):
         st.markdown(f"{config.ASSISTANT_ICON} {response}")
     st.session_state.chat_history.append(AIMessage(content=response))
 
     # =====================================================================
-    # FIX 8: SYNCHRONOUS MEMORY UPDATE
-    # We update memory NOW, in the main thread. 
-    # This ensures st.session_state.memory is updated with the name 
-    # BEFORE the next interaction starts.
+    # FIX 9: SMART MEMORY UPDATE
     # =====================================================================
-    with st.spinner("Updating memory..."):
-        try:
-            update_memory_bg(st.session_state.memory, user_query, response, llm)
-        except Exception as e:
-            print(f"Memory update failed: {e}")
+    if len(user_query) > 15: 
+        with st.spinner("Updating memory..."):
+            try:
+                update_memory_bg(st.session_state.memory, user_query, response, llm)
+            except Exception as e:
+                print(f"Memory update failed: {e}")
 
     with st.spinner("Generating voice..."):
         try: st.session_state.pending_tts = synthesize(response)
@@ -253,4 +289,3 @@ with c2:
     if st.button("📋 Summarize", use_container_width=True):
         if st.session_state.chat_history: st.info(summarize_conversation(st.session_state.chat_history, llm))
         else: st.warning("No conversation yet.")
-
