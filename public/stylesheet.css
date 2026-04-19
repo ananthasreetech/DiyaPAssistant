@@ -1,0 +1,77 @@
+/* 1. Kill the default chat UI entirely */
+#root, .MuiBox-root, #chat-input, header, .message-list {
+    display: none !important;
+    background: #120500 !important;
+}
+
+/* 2. Create a "Ghost" background that is actually your UI */
+body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -1;
+    background: #120500;
+}
+
+/* 3. Force the Welcome Screen (where the iframe lives) to be the ONLY thing visible */
+.cl-welcome-screen {
+    display: block !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    z-index: 9999 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Make the welcome message (chainlit.md) fill the entire viewport */
+[class*="WelcomeScreen"],
+[class*="welcome"],
+.welcome-message {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Stretch the iframe inside it */
+[class*="WelcomeScreen"] iframe,
+[class*="welcome"] iframe {
+  width: 100vw !important;
+  height: 100vh !important;
+  border: none !important;
+  display: block !important;
+}
+
+/* Hide the actual chat message list and input bar */
+#messages-container,
+[class*="MessageList"],
+[class*="MessageContainer"],
+[class*="InputBar"],
+[class*="input-bar"] {
+  display: none !important;
+}
+
+/* Force the injected overlay to the front */
+#voice-ui-overlay {
+    display: block !important;
+    visibility: visible !important;
+}
+
+/* Hide the "Message Bubble" styling around our injection */
+.cl-message-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+}
+
+/* Hide the user input and header so they don't peek through */
+header, #chat-input, .MuiToolbar-root {
+    display: none !important;
+}

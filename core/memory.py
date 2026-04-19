@@ -35,7 +35,8 @@ def load_memory() -> dict:
 
 def save_memory(mem: dict) -> None:
     try:
-        os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
+        parent = os.path.dirname(MEMORY_FILE)
+        if parent: os.makedirs(parent, exist_ok=True)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(mem, f, indent=2, ensure_ascii=False)
     except Exception as exc:

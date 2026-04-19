@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="/public/stylesheet.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diya</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* This targets the parent window from inside the iframe */
+:host-context(body) header, 
+:host-context(body) .MuiToolbar-root {
+    display: none !important;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: linear-gradient(135deg, #1a0800 0%, #3d1500 55%, #1a0800 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ── Card ─────────────────────────────────────────────────── */
+.card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 40px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,200,100,0.2);
+  border-radius: 28px;
+  padding: 40px 48px;
+  max-width: 820px;
+  width: 95%;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.6);
+}
+
+/* ── Avatar (left) ───────────────────────────────────────── */
+.avatar-col {
+  flex: 0 0 210px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar-frame {
+  width: 200px;
+  height: 255px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 2px solid rgba(255,200,100,0.25);
+  box-shadow: 0 4px 32px rgba(0,0,0,0.5);
+  position: relative;
+  transition: box-shadow 0.4s ease, border-color 0.4s ease;
+}
+
+.avatar-frame img,
+.avatar-frame video {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  border-radius: 18px;
+}
+
+.avatar-name     { color: #ffd580; font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+.avatar-subtitle { color: rgba(255,200,100,0.55); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; }
+
+/* Speaking glow */
+@keyframes speak-glow {
+  0%,100% { box-shadow: 0 4px 32px rgba(0,0,0,0.5); border-color: rgba(255,200,100,0.25); }
+  50%      { box-shadow: 0 4px 52px rgba(255,120,0,0.75), 0 0 90px rgba(255,80,0,0.35);
+             border-color: rgba(255,120,0,0.6); }
+}
+.speaking .avatar-frame { animation: speak-glow 1.2s ease-in-out infinite; }
+
+/* ── Controls (right) ────────────────────────────────────── */
+.controls-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Status badge */
+.badge {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 22px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,200,100,0.3);
+  background: rgba(255,255,255,0.05);
+  color: #ffd580; font-size: 14px; font-weight: 600;
+  letter-spacing: 0.5px; min-width: 210px; justify-content: center;
+}
+
+.dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #4ade80; transition: background 0.3s;
+}
+.thinking .dot { background: #facc15; animation: blink 0.7s infinite; }
+.speaking  .dot { background: #fb923c; animation: blink 0.5s infinite; }
+.recording .dot { background: #f87171; animation: blink 0.4s infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:0.2} }
+
+/* Transcript */
+.transcript {
+  width: 100%;
+  min-height: 64px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,200,100,0.12);
+  color: rgba(255,255,255,0.9);
+  font-size: 15px; line-height: 1.6;
+  text-align: center;
+}
+
+/* Mic button */
+#mic-btn {
+  width: 88px; height: 88px;
+  border-radius: 50%; border: none; cursor: pointer;
+  background: radial-gradient(circle at 38% 32%, #ff7733, #cc2200);
+  box-shadow: 0 0 28px rgba(255,100,0,0.5), 0 0 56px rgba(255,100,0,0.2);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s ease; position: relative; outline: none;
+}
+#mic-btn:hover:not(:disabled) {
+  transform: scale(1.1);
+  box-shadow: 0 0 40px rgba(255,100,0,0.8), 0 0 80px rgba(255,100,0,0.4);
+}
+#mic-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+#mic-btn svg { width: 38px; height: 38px; fill: white; }
+
+@keyframes mic-ring {
+  0%   { transform: scale(1); opacity: 0.75; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+#mic-btn.recording::after {
+  content: '';
+  position: absolute; inset: -4px; border-radius: 50%;
+  border: 3px solid rgba(255,100,0,0.8);
+  animation: mic-ring 1s ease-out infinite;
+}
+
+.mic-hint { color: rgba(255,200,100,0.5); font-size: 12px; letter-spacing: 1px; }
+
+/* Continuous toggle */
+.cont-row { display: flex; align-items: center; gap: 10px; }
+.cont-label { color: rgba(255,200,100,0.65); font-size: 13px; }
+.toggle {
+  width: 42px; height: 23px; border-radius: 12px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,200,100,0.3);
+  cursor: pointer; position: relative; transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle.on { background: #e65c00; }
+.toggle::after {
+  content: ''; position: absolute;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; top: 2px; left: 2px; transition: transform 0.2s;
+}
+.toggle.on::after { transform: translateX(19px); }
+
+/* Mobile */
+@media (max-width: 580px) {
+  .card { flex-direction: column; padding: 28px 20px; gap: 24px; }
+  .avatar-col { flex: none; }
+  .avatar-frame { width: 150px; height: 190px; }
+}
+</style>
+</head>
+<body>
+
+<div class="card" id="card">
+
+  <!-- LEFT: Avatar -->
+  <div class="avatar-col">
+    <div class="avatar-frame" id="av-frame">
+      <img id="av-idle"  src="/public/diya_idle.png"     style="opacity:1;"  alt="Diya">
+      <img id="av-speak" src="/public/diya_speaking.png" style="opacity:0;"  alt="Diya speaking">
+      <video id="av-vid" loop muted playsinline           style="opacity:0;">
+        <source src="/public/Diya1_voice_720p.mp4" type="video/mp4">
+      </video>
+    </div>
+    <div class="avatar-name">Diya</div>
+    <div class="avatar-subtitle">Voice Assistant</div>
+  </div>
+
+  <!-- RIGHT: Controls -->
+  <div class="controls-col">
+
+    <div class="badge" id="badge">
+      <div class="dot" id="dot"></div>
+      <span id="badge-txt">Ready to listen</span>
+    </div>
+
+    <div class="transcript" id="transcript">
+      Tap the mic and speak to me!
+    </div>
+
+    <button id="mic-btn" title="Tap to speak">
+      <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm6.5 9.5A6.5 6.5 0 0 1 5.5 10.5H4a8 8 0 0 0 7 7.94V21H9v2h6v-2h-2v-2.06A8 8 0 0 0 20 10.5h-1.5z"/></svg>
+    </button>
+    <div class="mic-hint" id="mic-hint">Tap to speak</div>
+
+    <div class="cont-row">
+      <span class="cont-label">Continuous listening</span>
+      <div class="toggle" id="cont-toggle"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────
+var STATE = 'idle'; // idle | recording | thinking | speaking
+var continuous = false;
+var mediaStream = null;
+var mediaRecorder = null;
+var audioChunks = [];
+var silenceTimer = null;
+
+var card       = document.getElementById('card');
+var avIdle     = document.getElementById('av-idle');
+var avSpeak    = document.getElementById('av-speak');
+var avVid      = document.getElementById('av-vid');
+var badge      = document.getElementById('badge');
+var badgeTxt   = document.getElementById('badge-txt');
+var transcript = document.getElementById('transcript');
+var micBtn     = document.getElementById('mic-btn');
+var micHint    = document.getElementById('mic-hint');
+var contToggle = document.getElementById('cont-toggle');
+
+// ── Avatar ─────────────────────────────────────────────────────────────
+function setAvatar(speaking) {
+  card.classList.toggle('speaking', speaking);
+  if (speaking) {
+    avIdle.style.opacity  = '0';
+    avSpeak.style.opacity = '0';
+    avVid.style.opacity   = '0';
+    var p = avVid.play();
+    if (p && p.then) {
+      p.then(function(){ avVid.style.opacity='1'; })
+       .catch(function(){ avSpeak.style.opacity='1'; });
+    } else {
+      avSpeak.style.opacity = '1';
+    }
+  } else {
+    avVid.pause();
+    avVid.style.opacity   = '0';
+    avSpeak.style.opacity = '0';
+    avIdle.style.opacity  = '1';
+  }
+}
+
+// ── Status ─────────────────────────────────────────────────────────────
+function setStatus(txt, state) {
+  STATE = state;
+  badgeTxt.textContent = txt;
+  badge.className  = 'badge ' + state;
+  micBtn.disabled  = (state === 'thinking' || state === 'speaking');
+  micHint.textContent =
+      state === 'recording' ? 'Listening... tap to stop' :
+      state === 'thinking'  ? 'Processing...' :
+      state === 'speaking'  ? 'Diya is speaking...' :
+      continuous            ? 'Listening automatically' :
+                              'Tap to speak';
+  if (state === 'recording') micBtn.classList.add('recording');
+  else                       micBtn.classList.remove('recording');
+}
+
+function showTranscript(text) {
+  transcript.textContent = text;
+}
+
+// ── Recording ──────────────────────────────────────────────────────────
+async function startRecording() {
+  if (STATE !== 'idle') return;
+  setStatus('Listening...', 'recording');
+
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch(e) {
+    setStatus('Mic access denied', 'idle');
+    showTranscript('Please allow microphone access and try again.');
+    return;
+  }
+
+  audioChunks = [];
+  var opts = {};
+  if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
+    opts = { mimeType: 'audio/webm;codecs=opus' };
+
+  mediaRecorder = new MediaRecorder(mediaStream, opts);
+
+  mediaRecorder.ondataavailable = function(e) {
+    if (e.data && e.data.size > 0) audioChunks.push(e.data);
+    resetSilence();
+  };
+
+  mediaRecorder.onstop = sendAudio;
+  mediaRecorder.start(500);
+  silenceTimer = setTimeout(stopRecording, 8000); // max 8s
+}
+
+function resetSilence() {
+  clearTimeout(silenceTimer);
+  silenceTimer = setTimeout(stopRecording, 2200);
+}
+
+function stopRecording() {
+  clearTimeout(silenceTimer);
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+    mediaStream && mediaStream.getTracks().forEach(function(t){ t.stop(); });
+  }
+  setStatus('Thinking...', 'thinking');
+  setAvatar(false);
+}
+
+function sendAudio() {
+  if (audioChunks.length === 0) { setStatus('Ready to listen', 'idle'); return; }
+
+  var mime = (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm';
+  var blob = new Blob(audioChunks, { type: mime });
+
+  if (blob.size < 4000) { setStatus('Ready to listen', 'idle'); return; }
+
+  // Strategy: trigger Chainlit's built-in hidden mic button if available
+  // (same origin — /public/voice_ui.html is served by Chainlit so parent = Chainlit)
+  // The Chainlit mic button in the parent page handles on_audio_chunk / on_audio_end.
+  // We simulate a click on it while sending the same blob data.
+
+  // Method A: Use Chainlit's WebSocket via parent's window object
+  // Method B: Click the hidden Chainlit mic button (simpler, works always)
+  // We convert blob to the format Chainlit expects and use its internal send
+
+  var reader = new FileReader();
+  reader.onload = function() {
+    var arrayBuffer = reader.result;
+    trySendToChainlit(arrayBuffer, mime, blob);
+  };
+  reader.readAsArrayBuffer(blob);
+}
+
+function trySendToChainlit(buffer, mime, blob) {
+  // Try to access parent Chainlit window (same origin)
+  try {
+    var parentDoc = window.parent.document;
+
+    // Find Chainlit's mic button in parent and simulate the full recording flow
+    // by dispatching the audio data through Chainlit's internal event system
+    var clWin = window.parent;
+
+    // Chainlit stores its emit function — find and use it
+    if (clWin.__chainlit && clWin.__chainlit.emit) {
+      var chunks = [new Uint8Array(buffer)];
+      clWin.__chainlit.emit('audio_chunk', { data: chunks[0], mimeType: mime });
+      clWin.__chainlit.emit('audio_end', {});
+      return;
+    }
+
+    // Fallback: find and click Chainlit's mic button, which starts its own recording
+    // This won't use our already-recorded audio, so show a "tap again" message
+    showTranscript('Please use the mic button below the chat window and speak again.');
+    setStatus('Ready to listen', 'idle');
+
+  } catch(e) {
+    // Cross-origin or other error — use fetch to a custom endpoint
+    showTranscript('Processing...');
+    sendViaFetch(blob, mime);
+  }
+}
+
+function sendViaFetch(blob, mime) {
+  // POST audio to the /audio endpoint exposed by chainlit_app.py
+  var form = new FormData();
+  form.append('audio', blob, 'recording.' + (mime.includes('webm') ? 'webm' : 'wav'));
+  form.append('mime_type', mime);
+
+  fetch('/audio', { method: 'POST', body: form })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      if (data.transcript) showTranscript(data.transcript);
+      if (data.response)   showTranscript(data.response);
+      setStatus('Ready to listen', 'idle');
+      if (continuous) setTimeout(startRecording, 500);
+    })
+    .catch(function() {
+      setStatus('Ready to listen', 'idle');
+      if (continuous) setTimeout(startRecording, 500);
+    });
+}
+
+// ── Mic button ─────────────────────────────────────────────────────────
+micBtn.addEventListener('click', function() {
+  if (STATE === 'idle')      startRecording();
+  else if (STATE === 'recording') stopRecording();
+});
+
+// ── Continuous toggle ──────────────────────────────────────────────────
+contToggle.addEventListener('click', function() {
+  continuous = !continuous;
+  contToggle.classList.toggle('on', continuous);
+  if (continuous && STATE === 'idle') startRecording();
+});
+
+// ── Watch for Chainlit audio responses in PARENT window ────────────────
+// When Chainlit sends cl.Audio(auto_play=True), an <audio> element is added
+// to the parent DOM. We hook into its play/ended events.
+function hookAudio(audio) {
+  audio.addEventListener('play', function() {
+    setStatus('Diya is speaking', 'speaking');
+    setAvatar(true);    // Safety timeout to stop avatar if ended doesn't fire
+    setTimeout(() => {
+      if (STATE === 'speaking') {
+        setAvatar(false);
+        setStatus('Ready to listen', 'idle');
+      }
+    }, 30000); // 30 seconds max  });
+  audio.addEventListener('ended', function() {
+    setAvatar(false);
+    if (continuous) {
+      setTimeout(function() { setStatus('Listening...', 'idle'); startRecording(); }, 500);
+    } else {
+      setStatus('Ready to listen', 'idle');
+    }
+  });
+  audio.addEventListener('pause', function() {
+    setAvatar(false);
+    if (STATE === 'speaking') setStatus('Ready to listen', 'idle');
+  });
+}
+
+// Hook audio in parent window (Chainlit page)
+function watchParentAudio() {
+  try {
+    var parentDoc = window.parent.document;
+    parentDoc.querySelectorAll('audio').forEach(hookAudio);
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes.forEach(function(n) {
+          if (n.nodeName === 'AUDIO') hookAudio(n);
+          else if (n.querySelectorAll) n.querySelectorAll('audio').forEach(hookAudio);
+        });
+      });
+    }).observe(parentDoc.body, { childList: true, subtree: true });
+  } catch(e) {
+    // Cross-origin — watch local document instead
+    document.querySelectorAll('audio').forEach(hookAudio);
+    new MutationObserver(function(muts) {
+      muts.forEach(function(m) {
+        m.addedNodes.forEach(function(n) {
+          if (n.nodeName === 'AUDIO') hookAudio(n);
+          else if (n.querySelectorAll) n.querySelectorAll('audio').forEach(hookAudio);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+}
+
+// Also watch for text responses to update transcript
+function watchParentMessages() {
+  try {
+    var parentDoc = window.parent.document;
+    var lastText = '';
+    setInterval(function() {
+      var msgs = parentDoc.querySelectorAll('[data-author], [class*="message"] [class*="content"]');
+      if (msgs.length > 0) {
+        var last = msgs[msgs.length - 1].textContent.trim();
+        if (last && last !== lastText && last.length > 4) {
+          lastText = last;
+          // Remove icon prefix and show
+          showTranscript(last.replace(/^[^\w\s]{1,3}\s*/, ''));
+        }
+      }
+    }, 400);
+  } catch(e) {}
+}
+
+watchParentAudio();
+watchParentMessages();
+</script>
+</body>
+</html>

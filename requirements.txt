@@ -1,4 +1,3 @@
-streamlit
 langchain-groq
 langchain-core
 langchain-community
@@ -9,3 +8,8 @@ edge-tts
 groq
 python-dotenv
 tavily-python
+streamlit
+streamlit-mic-recorder
+mutagen
+
+

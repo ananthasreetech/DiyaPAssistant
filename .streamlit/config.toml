@@ -1,0 +1,11 @@
+[theme]
+base = "light"
+
+[server]
+headless             = true
+enableCORS           = false
+enableXsrfProtection = true
+enableStaticServing  = true   # Serves files from ./static/ at /app/static/
+
+[browser]
+gatherUsageStats = false

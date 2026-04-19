@@ -13,7 +13,9 @@ dependencies = [
     "langchain-groq>=1.1.2",
     "langchain-openai>=1.1.12",
     "langchain-sambanova>=1.1.0",
+    "mutagen>=1.47.0",
     "python-dotenv>=1.2.2",
     "streamlit>=1.56.0",
+    "streamlit-mic-recorder>=0.0.8",
     "tavily-python>=0.7.23",
 ]

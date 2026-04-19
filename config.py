@@ -9,11 +9,16 @@ MEMORY_FILE = str(BASE_DIR / "diya_memory.json")
 # ── Assistant Constants ───────────────────────────────────────────────────────
 ASSISTANT_NAME = "Diya"
 ASSISTANT_ICON = "🪔"
-LLM_MODEL = "Meta-Llama-3.3-70B-Instruct"
-# LLM_MODEL = "llama-3.3-70b-versatile"
+# LLM_MODEL = "Meta-Llama-3.3-70B-Instruct"
+LLM_MODEL = "llama-3.3-70b-versatile"
 WHISPER_MODEL = "whisper-large-v3-turbo"
 TTS_VOICE = "en-IN-NeerjaNeural"
 # INACTIVITY_TIMEOUT = 180
+
+# ── Timezone Configuration ────────────────────────────────────────────────────
+# Force IST (Indian Standard Time) so greetings are always accurate for the user,
+# regardless of which timezone the Streamlit server is hosted in.
+TIMEZONE_OFFSET_HOURS = 5.5  # IST is UTC+5:30
 
 # ── Memory Settings ───────────────────────────────────────────────────────────
 # Number of last messages to send as context. 

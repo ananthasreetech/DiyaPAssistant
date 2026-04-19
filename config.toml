@@ -1,0 +1,34 @@
+[project]
+# Enables chat history persistence (optional - remove if no DB)
+enable_telemetry = false
+
+[features]
+# Enable the built-in microphone button in Chainlit's input bar
+audio.enabled = true
+# Silence timeout in ms before recording auto-stops
+audio.min_decibels = -45
+audio.initial_silence_timeout = 3000
+audio.silence_timeout = 2000
+audio.max_duration = 60000
+audio.chunk_duration = 500
+audio.sample_rate = 44100
+
+[UI]
+name = "Diya"
+description = "Your Indian voice assistant"
+# Sets the small avatar icon next to every Diya message
+default_avatar_file_url = "/public/diya_idle.png"
+# Custom CSS injected into the main page
+# custom_css = "/public/stylesheet.css"
+
+[UI.theme]
+default = "light"
+
+  [UI.theme.light]
+  background = "#FFFBF5"
+  paper = "#FFFFFF"
+
+    [UI.theme.light.primary]
+    main = "#E65C00"
+    dark = "#BF4C00"
+    light = "#FF8533"
