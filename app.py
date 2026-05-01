@@ -23,7 +23,6 @@ from mutagen.mp3 import MP3
 import edge_tts
 import groq as groq_sdk
 import streamlit as st
-import streamlit.components.v1 as components
 from audio_recorder_streamlit import audio_recorder
 from dotenv import load_dotenv
 from langchain_community.tools.tavily_search import TavilySearchResults
@@ -104,78 +103,94 @@ NO_SPEECH_PROB_THRESHOLD = 0.45
 
 # ── Page Config & Strict Single-Screen CSS ────────────────────────────────────
 
-st.set_page_config(page_title="Diya", page_icon=ASSISTANT_ICON, layout="wide")
+st.set_page_config(page_title="Diya", page_icon=ASSISTANT_ICON, layout="centered")
 
-st.markdown(f"""
+st.markdown("""
 <style>
-    /* Force single screen, no scroll */
-    .main .block-container {{
-        max-height: 100vh;
-        height: 100vh;
-        overflow: hidden;
-        padding: 1rem 2rem;
-    }}
-    [data-testid="stHeader"] {{ display: none; }}
-    
-    /* Layout styling for the "Message Box" */
-    .status-container {{
-        font-size: 1.2rem;
-        margin-bottom: 5px;
-        display: flex;
-        align-items: center;
-    }}
-    .status-dot {{
-        height: 12px; width: 12px;
-        background-color: #2ecc71;
-        border-radius: 50%;
-        display: inline-block;
-        margin-right: 10px;
-    }}
-    .message-box {{
-        background-color: #f8f9fa;
-        border: 2px solid #dee2e6;
-        border-radius: 15px;
-        padding: 20px;
-        min-height: 100px;
-        margin: 10px 0;
-        font-size: 1.1rem;
-        color: #2c3e50;
-    }}
-    /* Big Orange Mic Styling wrapper */
-    .mic-wrapper {{
-        text-align: center;
-        padding: 10px;
-        background: #ff7f50;
-        border-radius: 50%;
-        width: 80px; height: 80px;
-        margin: 0 auto;
-        display: flex; align-items: center; justify-content: center;
-    }}
-    .avatar-container {{
-        text-align: center;
-    }}
-    .avatar-video {{
-        width: 100%;
-        border-radius: 20px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }}
+/* ── Hide Streamlit chrome ── */
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+footer { display: none !important; }
+
+/* ── Prevent page-level scroll on desktop only ── */
+
+.main .block-container {
+    padding: 0.4rem 0.7rem !important;
+    max-width: 460px !important;
+    margin: 0 auto !important;
+    /* Do NOT set overflow:hidden here — it clips the mic button */
+}
+
+/* ── Avatar: fixed height ── */
+[data-testid="stImage"] img {
+    width: 100% !important;
+    max-height: 30vh !important;
+    object-fit: cover !important;
+    border-radius: 16px !important;
+    display: block !important;
+}
+[data-testid="caption"] { display: none !important; }
+
+/* ── Labels ── */
+.diya-label {
+    text-align: center; font-size: 1rem; font-weight: 700;
+    color: #2c3e50; margin: 0; line-height: 1.2;
+}
+.diya-sub {
+    text-align: center; font-size: 0.72rem; color: #888;
+    margin: 0 0 3px 0;
+}
+
+/* ── Status ── */
+.status-container {
+    font-size: 0.82rem; margin-bottom: 3px;
+    display: flex; align-items: center; gap: 6px;
+}
+.status-dot {
+    height: 9px; width: 9px; border-radius: 50%;
+    display: inline-block; flex-shrink: 0;
+}
+
+/* ── Message box ── */
+.message-box {
+    background: #f8f9fa; border: 1.5px solid #dee2e6;
+    border-radius: 10px; padding: 7px 12px;
+    min-height: 38px; max-height: 52px; overflow: hidden;
+    font-size: 0.85rem; color: #2c3e50; line-height: 1.35;
+    margin-bottom: 4px;
+}
+
+/* ── Audio player ── */
+[data-testid="stAudio"] audio { height: 32px !important; width: 100% !important; }
+
+/* ── Buttons ── */
+.stButton > button {
+    font-size: 0.78rem !important;
+    padding: 0.28rem 0.4rem !important;
+    border-radius: 8px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
 for _k, _v in {
-    "chat_history":    [],
-    "playing_tts":     None,   # audio bytes being played right now
-    "pending_text":    None,
-    "speech_end_time": None,
-    "api_key":         "",
-    "tavily_key":      "",
-    "recorder_key":    0,
-    "diya_state":      "ready",
-    "memory":          None,
-    "continuous":      False,
-    "last_activity":   time.time(),
+    "chat_history":       [],
+    "playing_tts":        None,
+    "audio_b64":          None,
+    "last_summary":       None,   # persists summary across reruns
+    "pending_text":       None,
+    "speech_end_time":    None,
+    "avatar_stop_time":   0.0,    # epoch: stop talking video, show idle
+    "api_key":            "",
+    "tavily_key":         "",
+    "recorder_key":       0,
+    "diya_state":         "ready",
+    "memory":             None,
+    "continuous":         False,
+    "last_activity":      time.time(),
+    "thinking_start_time": 0.0,
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -319,7 +334,7 @@ def _get_groq_async(key: str) -> groq_sdk.AsyncGroq:
 @st.cache_resource
 def _get_llm(key: str) -> ChatGroq:
     """Cached LangChain LLM — reused across all reruns (memory, summarize)."""
-    return ChatGroq(model=LLM_MODEL, groq_api_key=key, temperature=0, max_tokens=120)
+    return ChatGroq(model=LLM_MODEL, groq_api_key=key, temperature=0, max_tokens=200)
 
 llm = _get_llm(api_key)
 
@@ -384,11 +399,8 @@ def build_system_prompt() -> str:
         f"Today is {today}, {current_time}."
     )
 
-def get_llm_response(user_query: str, search_context: str | None,
-                     chat_history: list) -> str:
-    system = build_system_prompt()
-    if search_context:
-        system += f"\n\nLive web search results:\n{search_context}"
+def get_llm_response(user_query: str, system: str, chat_history: list) -> str:
+    """Accepts pre-built system prompt — does NOT rebuild it internally."""
     messages = [SystemMessage(content=system)]
     messages.extend(chat_history)
     messages.append(HumanMessage(content=user_query))
@@ -476,12 +488,10 @@ async def _respond_async(system: str, history: list, query: str) -> tuple[str, b
     """
     Stream LLM tokens via Groq async API.
     Fire TTS on each complete sentence as it arrives — true parallel overlap.
-
-    Timeline (old):  [=== LLM ===][=== TTS ===]
-    Timeline (new):  [=== LLM ===]
-                              [= TTS s1 =][= TTS s2 =]   (s1 starts mid-LLM)
     """
-    groq_a = _get_groq_async(api_key)
+    # Fresh AsyncGroq per call — cached clients reused across different
+    # ThreadPoolExecutor event loops cause silent connection failures on mobile.
+    groq_a = groq_sdk.AsyncGroq(api_key=api_key)
 
     # Build message list in Groq dict format — no LangChain overhead
     msgs: list[dict] = [{"role": "system", "content": system}]
@@ -524,19 +534,20 @@ async def _respond_async(system: str, history: list, query: str) -> tuple[str, b
     word_end = sum(r[1] for r in results)
     return full_text.strip(), audio, word_end
 
-def synthesize(text: str) -> bytes:
+def synthesize(text: str) -> tuple[bytes, float, float]:
+    """Returns (audio_bytes, buffered_duration, actual_duration).
+    buffered_duration = sleep timer budget (actual + 1s safety).
+    actual_duration   = true audio length used to stop the talking video.
+    """
     def _run():
         return asyncio.run(_tts_async(text))
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         audio_bytes, word_end_s = pool.submit(_run).result(timeout=300)
-    # Use word boundary end time = exact moment last word finishes.
-    # MP3 metadata duration includes silent padding edge_tts appends — ignore it.
-    # +0.25s gives a natural tail before the avatar stops speaking.
-    duration = (word_end_s + 0.25) if word_end_s > 0 else _estimate_audio_duration(audio_bytes, text)
-    # Store raw duration (not timestamp) — sleep block computes deadline fresh
-    # at the start of the speaking rerun, so elapsed pipeline time doesn't matter.
-    st.session_state.speech_end_time = duration
-    return audio_bytes
+    mp3_dur    = _estimate_audio_duration(audio_bytes, text)
+    word_dur   = (word_end_s + 0.25) if word_end_s > 0 else 0.0
+    actual     = max(mp3_dur, word_dur)   # true audio length
+    buffered   = actual + 1.0             # +1s so sleep never expires before audio
+    return audio_bytes, buffered, actual
 
 def should_search(q: str) -> bool:
     return any(kw in q.lower() for kw in SEARCH_KEYWORDS)
@@ -566,184 +577,166 @@ if st.session_state.diya_state == "ready":
         st.session_state.recorder_key += 1
         st.session_state.last_activity = time.time()
 
-# ── UI Layout (Side by Side) ─────────────────────────────────────────────────
+# ── Stuck-state guard: if "thinking" for >45s, the pipeline died mid-run ─────
+# Mobile browsers drop WebSocket connections during long operations.
+# diya_state stays "thinking" forever → mic never renders → infinite loop.
+# Reset to "ready" so the user can try again.
+if (st.session_state.diya_state == "thinking"
+        and time.time() - st.session_state.thinking_start_time > 45):
+    st.session_state.diya_state    = "ready"
+    st.session_state.recorder_key += 1
 
-col_left, col_right = st.columns([1, 1.5], gap="large")
+# ── HTTP warning — microphone requires HTTPS on mobile Chrome ─────────────────
+_ctx = st.context if hasattr(st, "context") else None
+_url = getattr(_ctx, "url", "") if _ctx else ""
+if _url and _url.startswith("http://") and not _url.startswith("http://localhost"):
+    st.error(
+        "⚠️ **Microphone blocked on mobile** — you are on HTTP. "
+        "Chrome requires HTTPS for microphone access. "
+        "Run `run_https.bat` and open `https://192.168.1.5:8501` instead.",
+        icon="🔒",
+    )
 
-with col_left:
-    if st.session_state.diya_state == "speaking" and st.session_state.playing_tts:
-        audio_b64 = base64.b64encode(st.session_state.playing_tts).decode()
-        video_b64 = _cached_b64(str(AVATAR_TALKING)) if AVATAR_TALKING.exists() else ""
-        idle_b64  = _cached_b64(str(AVATAR_IDLE))    if AVATAR_IDLE.exists()    else ""
+# ── 1. Avatar ─────────────────────────────────────────────────────────────────
+# st.image(path.read_bytes()) uses Streamlit's media server — a separate HTTP
+# request, never embedded in the WebSocket frame. Works at any file size.
+#
+# ── 2. Audio ──────────────────────────────────────────────────────────────────
+# st.audio(same_bytes, autoplay=True):
+#   Streamlit hashes the bytes → stable media URL (/_stcore/media/abc123.mp3).
+#   React sees identical props on every keepalive rerun → skips remounting.
+#   The <audio> element is NEVER destroyed mid-playback → audio plays cleanly
+#   through all 0.5s keepalive reruns without restarting.
+#
+# st.video/st.audio: same bytes → same hash URL → React never remounts.
+# No iframe, no base64 in frame. Works on mobile.
 
-        if video_b64:
-            # Video + audio in one iframe so Web Audio API can control the video
-            # based on real-time amplitude — natural lip sync, no blind looping.
-            components.html(f"""<!DOCTYPE html><html>
-<head><style>
-  body  {{margin:0;padding:0;overflow:hidden;background:transparent;}}
-  video {{width:100%;border-radius:20px;box-shadow:0 4px 15px rgba(0,0,0,.1);display:block;}}
-  img   {{width:100%;border-radius:20px;box-shadow:0 4px 15px rgba(0,0,0,.1);display:block;}}
-</style></head>
-<body>
-  <!-- idle frame shown during silent gaps so avatar looks natural -->
-  <img  id="idle" src="data:image/png;base64,{idle_b64}" {"style='display:none'" if not idle_b64 else ""}>
-  <video id="v" loop muted playsinline
-         src="data:video/mp4;base64,{video_b64}" style="display:none;"></video>
-  <audio id="a" src="data:audio/mp3;base64,{audio_b64}"></audio>
-<script>
-(function(){{
-  var audio = document.getElementById('a');
-  var video = document.getElementById('v');
-  var idle  = document.getElementById('idle');
-  var THRESHOLD = 12;   // amplitude 0-255; tune up if too sensitive
-  var HOLD_MS   = 120;  // ms to keep video running after amplitude drops (avoids flicker)
-  var holdTimer = null;
-  var ctx, analyser, freqData;
-
-  function showVideo() {{
-    video.style.display = 'block';
-    if (idle) idle.style.display = 'none';
-  }}
-  function showIdle() {{
-    video.style.display = 'none';
-    video.pause();
-    if (idle) idle.style.display = 'block';
-  }}
-
-  function tick() {{
-    if (audio.ended) {{ showIdle(); return; }}
-    analyser.getByteFrequencyData(freqData);
-    // Average lower-mid bins — the voice frequency range
-    var sum = 0;
-    for (var i = 2; i < 40; i++) sum += freqData[i];
-    var avg = sum / 38;
-
-    if (avg > THRESHOLD) {{
-      if (holdTimer) {{ clearTimeout(holdTimer); holdTimer = null; }}
-      showVideo();
-      if (video.paused) video.play();
-    }} else {{
-      if (!holdTimer) {{
-        holdTimer = setTimeout(function() {{
-          holdTimer = null;
-          showIdle();
-        }}, HOLD_MS);
-      }}
-    }}
-    requestAnimationFrame(tick);
-  }}
-
-  function start() {{
-    ctx      = new (window.AudioContext || window.webkitAudioContext)();
-    var src  = ctx.createMediaElementSource(audio);
-    analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    src.connect(analyser);
-    analyser.connect(ctx.destination);
-    freqData = new Uint8Array(analyser.frequencyBinCount);
-    tick();
-  }}
-
-  audio.play().then(start).catch(function() {{
-    // Autoplay blocked — show video anyway as visual fallback
-    showVideo(); video.play();
-  }});
-}})();
-</script>
-</body></html>""", height=400)
-
+if st.session_state.diya_state == "speaking" and st.session_state.playing_tts:
+    _show_idle = (st.session_state.avatar_stop_time > 0
+                  and time.time() >= st.session_state.avatar_stop_time)
+    try:
+        if _show_idle:
+            st.image(AVATAR_IDLE.read_bytes(), use_container_width=True)
         else:
-            # No talking video — just play audio, show speaking image
-            img_b64 = _cached_b64(str(AVATAR_SPEAKING)) if AVATAR_SPEAKING.exists() else idle_b64
-            components.html(f"""<!DOCTYPE html><html>
-<head><style>body{{margin:0;padding:0;}}img{{width:100%;border-radius:20px;}}</style></head>
-<body>
-  <img src="data:image/png;base64,{img_b64}">
-  <audio id="a" src="data:audio/mp3;base64,{audio_b64}"></audio>
-  <script>document.getElementById('a').play();</script>
-</body></html>""", height=400)
-
-    else:
-        img_b64 = _cached_b64(str(AVATAR_IDLE)) if AVATAR_IDLE.exists() else ""
-        if img_b64:
-            st.markdown(f'<div class="avatar-container"><img src="data:image/png;base64,{img_b64}" class="avatar-video"></div>', unsafe_allow_html=True)
-    
-    st.markdown(f"<h2 style='text-align:center; margin-bottom:0;'>{ASSISTANT_NAME}</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align:center; color:gray;'>Voice Assistant</p>", unsafe_allow_html=True)
-
-with col_right:
-    # 1. Status Row
-    status_text = "Ready to listen" if st.session_state.diya_state == "ready" else st.session_state.diya_state.capitalize() + "..."
-    status_color = "#2ecc71" if st.session_state.diya_state == "ready" else "#f1c40f"
-    st.markdown(f'<div class="status-container"><span class="status-dot" style="background-color:{status_color}"></span>{status_text}</div>', unsafe_allow_html=True)
-
-    # 2. Message Box
-    last_msg = "Tap the mic and speak!"
-    if st.session_state.chat_history:
-        last_msg = st.session_state.chat_history[-1].content
-    st.markdown(f'<div class="message-box">{last_msg}</div>', unsafe_allow_html=True)
-
-    # 3. Mic Button Area
-    c_mic_left, c_mic_mid, c_mic_right = st.columns([1,1,1])
-    with c_mic_mid:
-        if st.session_state.diya_state == "ready":
-            audio_bytes = audio_recorder(
-                text="", icon_size="3x", 
-                neutral_color="#2ecc71", # Green
-                recording_color="#ff7f50", # Orange
-                key=f"recorder_{st.session_state.recorder_key}",
-                auto_start=st.session_state.continuous
-            )
-        else:
-            audio_bytes = None
-
-    # 4. Continuous Toggle
-    cont_label = "⏹️ Stop Continuous" if st.session_state.continuous else "🔁 Start Continuous"
-    if st.button(cont_label, use_container_width=True):
-        st.session_state.continuous = not st.session_state.continuous
-        st.session_state.recorder_key += 1   # reset widget so stale auto-start audio is discarded
-        st.rerun()
-
-    # Audio is handled inside col_left components.html together with the video.
-    # Having both in the same JS scope enables Web Audio API amplitude-based lip sync.
-
-    # ── Chat history ──────────────────────────────────────────────────────────
-    chat_area = st.container(height=180, border=False)
-    with chat_area:
-        for msg in st.session_state.chat_history:
-            if isinstance(msg, HumanMessage):
-                with st.chat_message("user"):
-                    st.markdown(f"🎤 {msg.content}")
-            elif isinstance(msg, AIMessage):
-                with st.chat_message("assistant"):
-                    st.markdown(f"{ASSISTANT_ICON} {msg.content}")
-
-    # ── Footer buttons ────────────────────────────────────────────────────────
-    fc1, fc2 = st.columns(2)
-    with fc1:
-        if st.button("🗑️ Clear chat", use_container_width=True):
-            st.session_state.chat_history  = []
-            st.session_state.playing_tts   = None
-            st.session_state.speech_end_time = None
-            st.session_state.diya_state    = "ready"
-            st.session_state.recorder_key += 1
-            st.session_state.last_activity = time.time()
-            st.rerun()
-    with fc2:
-        if st.button("📋 Summarize", use_container_width=True):
-            if st.session_state.chat_history:
-                with st.spinner("Summarizing..."):
-                    summary = summarize_conversation()
-                st.info(summary)
+            vid_bytes = AVATAR_TALKING.read_bytes() if AVATAR_TALKING.exists() else None
+            if vid_bytes:
+                st.video(vid_bytes, format="video/mp4",
+                         autoplay=True, loop=True, muted=True)
             else:
-                st.warning("No conversation to summarize yet.")
+                img_bytes = AVATAR_SPEAKING.read_bytes() if AVATAR_SPEAKING.exists() \
+                            else AVATAR_IDLE.read_bytes()
+                st.image(img_bytes, use_container_width=True)
+    except Exception:
+        st.markdown("<p style='text-align:center;font-size:3rem;margin:0'>\U0001f50a</p>",
+                    unsafe_allow_html=True)
+    st.audio(st.session_state.playing_tts, format="audio/mp3", autoplay=True)
+else:
+    try:
+        st.image(AVATAR_IDLE.read_bytes(), use_container_width=True)
+    except Exception:
+        st.markdown("<p style='text-align:center;font-size:3rem;margin:0'>\U0001f54e</p>",
+                    unsafe_allow_html=True)
+
+
+# ── 2. Name label ─────────────────────────────────────────────────────────────
+st.markdown(f"<p class='diya-label'>{ASSISTANT_NAME} 🪔</p>", unsafe_allow_html=True)
+st.markdown("<p class='diya-sub'>Voice Assistant</p>", unsafe_allow_html=True)
+
+# ── 3. Status ─────────────────────────────────────────────────────────────────
+status_text  = "Ready to listen" if st.session_state.diya_state == "ready" \
+               else st.session_state.diya_state.capitalize() + "..."
+status_color = "#2ecc71" if st.session_state.diya_state == "ready" else "#f1c40f"
+st.markdown(
+    f'<div class="status-container">'
+    f'<span class="status-dot" style="background:{status_color};"></span>'
+    f'{status_text}</div>',
+    unsafe_allow_html=True,
+)
+
+# ── 3b. Audio is played via st.audio above in the avatar block. ──────────────
+
+# ── 4. Last message ───────────────────────────────────────────────────────────
+last_msg = "Tap the mic and speak!"
+if st.session_state.chat_history:
+    last_msg = st.session_state.chat_history[-1].content
+st.markdown(f'<div class="message-box">{last_msg}</div>', unsafe_allow_html=True)
+
+# ── 5. Mic button ─────────────────────────────────────────────────────────────
+_mc1, _mc2, _mc3 = st.columns([1, 1, 1])
+with _mc2:
+    if st.session_state.diya_state == "ready":
+        audio_bytes = audio_recorder(
+            text="",
+            icon_size="3x",
+            neutral_color="#2ecc71",
+            recording_color="#ff7f50",
+            pause_threshold=2.0,
+            sample_rate=16000,
+            key=f"recorder_{st.session_state.recorder_key}",
+            auto_start=st.session_state.continuous,
+        )
+    else:
+        state_icon = "🤔" if st.session_state.diya_state == "thinking" else "🔊"
+        st.markdown(
+            f"<div style='text-align:center;font-size:2.2rem;padding:6px;opacity:0.5'>"
+            f"{state_icon}</div>",
+            unsafe_allow_html=True,
+        )
+        audio_bytes = None
+
+st.markdown(
+    "<p style='text-align:center;font-size:0.7rem;color:#aaa;margin:0 0 4px 0'>"
+    "Tap 🟢 to record · tap again to stop</p>",
+    unsafe_allow_html=True,
+)
+
+# ── 6. Control buttons ────────────────────────────────────────────────────────
+_b1, _b2, _b3 = st.columns(3)
+with _b1:
+    cont_label = "⏹️ Stop" if st.session_state.continuous else "🔁 Auto"
+    if st.button(cont_label, use_container_width=True):
+        st.session_state.continuous   = not st.session_state.continuous
+        st.session_state.recorder_key += 1
+        st.rerun()
+with _b2:
+    if st.button("🗑️ Clear", use_container_width=True):
+        st.session_state.chat_history    = []
+        st.session_state.playing_tts     = None
+        st.session_state.speech_end_time = None
+        st.session_state.diya_state      = "ready"
+        st.session_state.recorder_key   += 1
+        st.session_state.last_activity   = time.time()
+        st.rerun()
+with _b3:
+    if st.button("📋 Sum.", use_container_width=True):
+        if st.session_state.chat_history:
+            with st.spinner("Summarizing..."):
+                st.session_state.last_summary = summarize_conversation()
+        else:
+            st.session_state.last_summary = "Nothing to summarize yet."
+
+# Show summary if present (persists until next mic interaction)
+if st.session_state.last_summary:
+    st.info(st.session_state.last_summary)
+
+# ── 7. Chat history (scrollable, compact) ────────────────────────────────────
+chat_area = st.container(height=80, border=False)
+with chat_area:
+    for msg in st.session_state.chat_history:
+        if isinstance(msg, HumanMessage):
+            with st.chat_message("user"):
+                st.markdown(f"🎤 {msg.content}")
+        elif isinstance(msg, AIMessage):
+            with st.chat_message("assistant"):
+                st.markdown(f"{ASSISTANT_ICON} {msg.content}")
 
 # ── Processing pipeline (runs after layout renders) ───────────────────────────
 
-if audio_bytes:
-    st.session_state.last_activity = time.time()
-    st.session_state.diya_state    = "thinking"
+if audio_bytes and len(audio_bytes) > 8000:  # <8KB = silence/stale replay, skip
+    st.session_state.last_activity        = time.time()
+    st.session_state.diya_state           = "thinking"
+    st.session_state.thinking_start_time  = time.time()
+    st.session_state.last_summary         = None   # clear summary on new interaction
 
     # 1. Transcribe — one automatic retry on connection errors
     user_query = ""
@@ -765,13 +758,17 @@ if audio_bytes:
         st.error(f"Transcription failed: {_transcribe_error}")
         st.session_state.diya_state    = "ready"
         st.session_state.recorder_key += 1
-        st.rerun()    # rerun (not st.stop) — cleanly exits without spinner artifacts
+        st.rerun()
+        st.stop()  # never reached but guards against rerun not raising in all Streamlit versions
 
     if not user_query:
-        st.warning("No speech detected — please try again.")
+        # Don't st.rerun() here — it clears the warning before user sees it.
+        # Just reset state and let the script end. Streamlit will show the
+        # warning and the next user interaction triggers a fresh rerun.
+        st.warning("No speech detected — please tap the mic and try again.")
         st.session_state.diya_state    = "ready"
         st.session_state.recorder_key += 1
-        st.rerun()
+        st.stop()
 
     # 2. Summarize intercept
     if any(t in user_query.lower() for t in SUMMARIZE_TRIGGERS):
@@ -779,16 +776,21 @@ if audio_bytes:
             with st.spinner("Summarizing conversation..."):
                 summary_text = summarize_conversation()
             tts_audio = None
+            tts_dur   = 0.0
+            tts_actual_s = 0.0
             with st.spinner("Generating voice..."):
                 try:
-                    tts_audio = synthesize(summary_text)
+                    tts_audio, tts_dur, tts_actual_s = synthesize(summary_text)
                 except Exception:
-                    tts_audio = None
+                    tts_audio, tts_dur, tts_actual_s = None, 0.0, 0.0
             st.session_state.chat_history.append(HumanMessage(content=user_query))
             st.session_state.chat_history.append(AIMessage(content=summary_text))
-            st.session_state.playing_tts   = tts_audio
-            st.session_state.diya_state    = "speaking" if tts_audio else "ready"
-            st.session_state.recorder_key += 1
+            st.session_state.playing_tts     = tts_audio
+            st.session_state.speech_end_time = (time.time() + tts_dur)      if tts_audio else None
+            st.session_state.avatar_stop_time= (time.time() + tts_actual_s) if tts_audio else 0.0
+            st.session_state.audio_b64       = base64.b64encode(tts_audio).decode() if tts_audio else None
+            st.session_state.diya_state      = "speaking" if tts_audio else "ready"
+            st.session_state.recorder_key   += 1
             st.rerun()
         else:
             msg = "We haven't spoken about anything yet, so there is nothing to summarize."
@@ -817,25 +819,18 @@ if audio_bytes:
                 "they check an official website or news source."
             )
 
-    # 4+5. LLM (streaming) + TTS (per-sentence) — run in one async pipeline.
+    # 4. LLM response — simple sequential call, proven reliable across turns
     system = build_system_prompt()
     if search_context:
         system += f"\n\nLive web search results:\n{search_context}"
 
-    response, tts_bytes, word_end_s = "", None, 0.0
+    response = ""
     _llm_error = None
     for _attempt in range(2):
         try:
             with st.spinner(f"{ASSISTANT_NAME} is thinking..."):
-                def _run_pipeline():
-                    loop = asyncio.new_event_loop()
-                    try:
-                        return loop.run_until_complete(
-                            _respond_async(system, chat_history_snapshot, user_query))
-                    finally:
-                        loop.close()
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    response, tts_bytes, word_end_s = ex.submit(_run_pipeline).result(timeout=60)
+                response = get_llm_response(user_query, system,
+                                            chat_history_snapshot)
             _llm_error = None
             break
         except Exception as exc:
@@ -850,12 +845,20 @@ if audio_bytes:
         st.session_state.diya_state    = "ready"
         st.session_state.recorder_key += 1
         st.rerun()
+        st.stop()
+
+    if not response:
+        response = "I'm sorry, I didn't catch that. Could you please try again?"
+
+    # 5. TTS — synthesize returns (bytes, buffered_dur, actual_dur)
+    tts_bytes, tts_dur, tts_actual = None, 0.0, 0.0
+    try:
+        with st.spinner("Generating voice..."):
+            tts_bytes, tts_dur, tts_actual = synthesize(response)
+    except Exception as exc:
+        st.warning(f"Voice unavailable: {exc}")
 
     st.session_state.playing_tts = tts_bytes or None
-    if tts_bytes:
-        duration = (word_end_s + 0.25) if word_end_s > 0 \
-                   else _estimate_audio_duration(tts_bytes, response)
-        st.session_state.speech_end_time = duration
 
     # 6. Memory update (fire and forget — never blocks rerun)
     mem_snapshot = dict(st.session_state.memory)
@@ -863,29 +866,42 @@ if audio_bytes:
     executor.submit(update_memory_bg, mem_snapshot, user_query, response, llm)
     executor.shutdown(wait=False)
 
-    # 7. Append to history and rerun
+    # 7. Append to history and rerun.
+    # Compute audio_b64 ONCE here and store it — so the <audio> HTML src
+    # is identical on every keepalive rerun (browser won't restart playback).
     st.session_state.chat_history.append(HumanMessage(content=user_query))
     st.session_state.chat_history.append(AIMessage(content=response))
-    st.session_state.diya_state    = "speaking" if st.session_state.playing_tts else "ready"
-    st.session_state.recorder_key += 1
-    st.rerun()
-
-# ── Speaking state: sleep until audio done, then reset (ONE clean rerun) ──────
-# How this works:
-#   1. The speaking rerun renders st.audio(playing_tts) + the looping video.
-#      st.audio deltas are sent to the browser immediately as the script runs.
-#   2. Script reaches here and sleeps for the exact audio duration.
-#      Browser plays audio + video independently during this time.
-#   3. Sleep ends → reset state → st.rerun() → new render shows idle avatar + mic.
-#      No window.location.reload() → session state is fully preserved.
-#      No intermediate reruns → audio and video are never interrupted mid-play.
-
-if st.session_state.diya_state == "speaking" and st.session_state.speech_end_time:
-    # speech_end_time is raw duration (seconds). Compute deadline NOW at the
-    # start of the speaking rerun so pipeline elapsed time doesn't shrink the sleep.
-    time.sleep(max(0.0, st.session_state.speech_end_time))
-    st.session_state.diya_state      = "ready"
-    st.session_state.playing_tts     = None
-    st.session_state.speech_end_time = None
+    st.session_state.diya_state      = "speaking" if tts_bytes else "ready"
+    st.session_state.speech_end_time = (time.time() + tts_dur)    if tts_bytes else None
+    st.session_state.avatar_stop_time= (time.time() + tts_actual) if tts_bytes else 0.0
+    if tts_bytes:
+        st.session_state.audio_b64 = base64.b64encode(tts_bytes).decode()
+    else:
+        st.session_state.audio_b64 = None
     st.session_state.recorder_key   += 1
     st.rerun()
+
+# ── Speaking state: chunked sleep — keeps WebSocket alive on mobile ───────────
+# WHY CHUNKED (not single sleep):
+#   time.sleep(N) blocks Streamlit's script runner. On mobile, Streamlit's
+#   WebSocket heartbeat stops. Browser drops connection after ~5s → state lost
+#   → infinite loop. 0.5s chunks send a UI delta every 0.5s = connection alive.
+#
+# WHY st.audio SURVIVES RERUNS:
+#   st.audio(same_bytes) sends the same Streamlit media hash URL to React.
+#   React sees identical props → skips remounting the <audio> element.
+#   Audio plays uninterrupted through every 0.5s rerun.
+
+if st.session_state.diya_state == "speaking" and st.session_state.speech_end_time:
+    remaining = st.session_state.speech_end_time - time.time()
+    if remaining > 0:
+        time.sleep(min(0.5, remaining))
+        st.rerun()
+    else:
+        st.session_state.diya_state      = "ready"
+        st.session_state.playing_tts     = None
+        st.session_state.audio_b64       = None
+        st.session_state.speech_end_time = None
+        st.session_state.avatar_stop_time= 0.0
+        st.session_state.recorder_key   += 1
+        st.rerun()
