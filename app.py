@@ -23,6 +23,7 @@ from mutagen.mp3 import MP3
 import edge_tts
 import groq as groq_sdk
 import streamlit as st
+import streamlit.components.v1 as components
 from audio_recorder_streamlit import audio_recorder
 from dotenv import load_dotenv
 from langchain_community.tools.tavily_search import TavilySearchResults
@@ -629,7 +630,22 @@ if st.session_state.diya_state == "speaking" and st.session_state.playing_tts:
     except Exception:
         st.markdown("<p style='text-align:center;font-size:3rem;margin:0'>\U0001f50a</p>",
                     unsafe_allow_html=True)
-    st.audio(st.session_state.playing_tts, format="audio/mp3", autoplay=True)
+    # Audio via components.html iframe — NOT st.audio.
+    # Reason: on Streamlit Cloud + Samsung Chrome, st.audio is interrupted by
+    # every 0.5s keepalive rerun (React delta resets the audio element even
+    # when bytes are identical). Manual tap also fails for the same reason.
+    # components.html creates a separate iframe document that Streamlit's
+    # rerun cycle cannot reach — audio plays to completion uninterrupted.
+    # audio_b64 is pre-computed once in the pipeline (same string every rerun)
+    # → same srcDoc → React skips iframe update → iframe stays alive.
+    _ab64 = st.session_state.get("audio_b64") or ""
+    if _ab64:
+        components.html(
+            f'<audio autoplay controls style="width:100%;height:32px">'
+            f'<source src="data:audio/mp3;base64,{_ab64}" type="audio/mp3">'
+            f'</audio>',
+            height=40,
+        )
 else:
     try:
         st.image(AVATAR_IDLE.read_bytes(), use_container_width=True)
